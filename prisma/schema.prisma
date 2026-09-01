@@ -1,0 +1,105 @@
+// Prisma Schema for ZuYiBa - Football Player Guessing Game
+
+generator client {
+  provider = "prisma-client"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// Enums
+
+enum League {
+  PREMIER_LEAGUE
+  LA_LIGA
+  BUNDESLIGA
+  SERIE_A
+  LIGUE_1
+}
+
+enum PositionGroup {
+  GOALKEEPER
+  DEFENDER
+  MIDFIELDER
+  FORWARD
+}
+
+enum PreferredFoot {
+  LEFT
+  RIGHT
+  BOTH
+}
+
+enum GameStatus {
+  PLAYING
+  WON
+  LOST
+}
+
+// Models
+
+model Player {
+  id            String        @id @default(cuid())
+  name          String
+  slug          String        @unique
+  nationality   String
+  countryCode   String        @db.VarChar(3)
+  club          String
+  league        League
+  position      String
+  positionGroup PositionGroup
+  birthDate     DateTime      @db.Date
+  heightCm      Int?           // Nullable - not all data sources provide height
+  preferredFoot PreferredFoot? // Nullable - not all data sources provide preferred foot
+  active        Boolean       @default(true)
+  popularity    Int           @default(50) // 1-100 scale for ranking search results
+  imageUrl      String?
+  clubLogoUrl   String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  // Relations
+  gamesAsAnswer GameSession[] @relation("AnswerPlayer")
+  guesses       Guess[]       @relation("GuessedPlayer")
+
+  @@index([league])
+  @@index([active])
+  @@index([popularity])
+  @@index([name])
+}
+
+model GameSession {
+  id             String     @id @default(cuid())
+  status         GameStatus @default(PLAYING)
+  attemptsUsed   Int        @default(0)
+  maxAttempts    Int        @default(8)
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+  completedAt    DateTime?
+
+  // Relations
+  answerPlayerId String
+  answerPlayer   Player  @relation("AnswerPlayer", fields: [answerPlayerId], references: [id])
+  guesses        Guess[]
+
+  @@index([status])
+  @@index([createdAt])
+}
+
+model Guess {
+  id          String   @id @default(cuid())
+  guessNumber Int
+  createdAt   DateTime @default(now())
+
+  // Relations
+  gameSessionId String
+  gameSession   GameSession @relation(fields: [gameSessionId], references: [id], onDelete: Cascade)
+  playerId      String
+  player        Player      @relation("GuessedPlayer", fields: [playerId], references: [id])
+
+  @@unique([gameSessionId, playerId])
+  @@unique([gameSessionId, guessNumber])
+  @@index([gameSessionId])
+}
