@@ -83,7 +83,7 @@ export async function POST(
     const guessedPlayerData = toPlayerData(guessedPlayer, referenceDate);
     const answerPlayerData = toPlayerData(game.answerPlayer, referenceDate);
     const comparison = comparePlayer(guessedPlayerData, answerPlayerData);
-    const isCorrect = isWinningGuess(comparison);
+    const isCorrect = isWinningGuess(guessedPlayer.id, game.answerPlayerId);
 
     // Submit the guess and update game state
     const guessNumber = game.attemptsUsed + 1;

@@ -1,5 +1,39 @@
 import { z } from 'zod';
 import { LEAGUES, POSITION_GROUPS, PREFERRED_FEET } from '@/types/database';
+import { calculateAge } from '@/features/game/utils/age';
+
+// Eligibility policy for the game's player dataset, not a universal football rule.
+export const MIN_PLAYER_AGE = 14;
+export const MAX_PLAYER_AGE = 60;
+
+const birthDateSchema = z.string().superRefine((value, ctx) => {
+  const birthDate = new Date(`${value}T00:00:00.000Z`);
+  if (
+    !/^\d{4}-\d{2}-\d{2}$/.test(value) ||
+    !Number.isFinite(birthDate.getTime()) ||
+    birthDate.toISOString().slice(0, 10) !== value
+  ) {
+    ctx.addIssue({
+      code: 'custom',
+      message: 'Birth date must be a real date in YYYY-MM-DD format',
+    });
+    return;
+  }
+
+  const referenceDate = new Date();
+  if (birthDate > referenceDate) {
+    ctx.addIssue({ code: 'custom', message: 'Birth date cannot be in the future' });
+    return;
+  }
+
+  const age = calculateAge(birthDate, referenceDate);
+  if (age < MIN_PLAYER_AGE || age > MAX_PLAYER_AGE) {
+    ctx.addIssue({
+      code: 'custom',
+      message: `Player age must be between ${MIN_PLAYER_AGE} and ${MAX_PLAYER_AGE} years (received ${age})`,
+    });
+  }
+});
 
 /**
  * Zod schema for validating player CSV rows.
@@ -21,7 +55,7 @@ export const playerCsvRowSchema = z.object({
   positionGroup: z.enum(POSITION_GROUPS, {
     message: `Position group must be one of: ${POSITION_GROUPS.join(', ')}`,
   }),
-  birthDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Birth date must be in YYYY-MM-DD format'),
+  birthDate: birthDateSchema,
   heightCm: z.preprocess(
     (val) => (val === '' || val === null || val === undefined ? null : val),
     z.coerce
@@ -33,11 +67,16 @@ export const playerCsvRowSchema = z.object({
   ),
   preferredFoot: z.preprocess(
     (val) => (val === '' || val === null || val === undefined ? null : val),
-    z.enum(PREFERRED_FEET, {
-      message: `Preferred foot must be one of: ${PREFERRED_FEET.join(', ')}`,
-    }).nullable()
+    z
+      .enum(PREFERRED_FEET, {
+        message: `Preferred foot must be one of: ${PREFERRED_FEET.join(', ')}`,
+      })
+      .nullable()
   ),
-  active: z.coerce.boolean().default(true),
+  active: z.preprocess(
+    (value) => (value === 'true' ? true : value === 'false' ? false : value),
+    z.boolean().default(true)
+  ),
   popularity: z.coerce
     .number()
     .int('Popularity must be an integer')

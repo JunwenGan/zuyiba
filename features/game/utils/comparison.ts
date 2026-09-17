@@ -110,22 +110,9 @@ export function comparePlayer(guessed: PlayerData, answer: PlayerData): GuessCom
 }
 
 /**
- * Check if all comparison results indicate a correct guess (win).
- * Height and preferredFoot are skipped if null (data unknown).
+ * Only the hidden player's identity determines a win.
+ * Different players can share every comparison attribute.
  */
-export function isWinningGuess(comparison: GuessComparison): boolean {
-  const coreAttributesCorrect =
-    comparison.nationality === 'correct' &&
-    comparison.club === 'correct' &&
-    comparison.league === 'correct' &&
-    comparison.position === 'correct' &&
-    comparison.age.result === 'correct';
-
-  // Height: must be correct if known, skip if unknown
-  const heightOk = comparison.height === null || comparison.height.result === 'correct';
-
-  // Preferred foot: must be correct if known, skip if unknown
-  const footOk = comparison.preferredFoot === null || comparison.preferredFoot === 'correct';
-
-  return coreAttributesCorrect && heightOk && footOk;
+export function isWinningGuess(guessedPlayerId: string, answerPlayerId: string): boolean {
+  return guessedPlayerId === answerPlayerId;
 }
