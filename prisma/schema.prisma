@@ -38,6 +38,41 @@ enum GameStatus {
   LOST
 }
 
+enum MatchRoomStatus {
+  WAITING
+  PLAYING
+}
+
+// Lobby storage only. Answer, guesses and first-correct winner come next.
+model GuestSession {
+  id        String   @id @default(cuid())
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([expiresAt])
+}
+
+model MatchRoom {
+  id           String             @id @default(cuid())
+  hostId       String
+  status       MatchRoomStatus    @default(WAITING)
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+  participants MatchParticipant[]
+}
+
+model MatchParticipant {
+  roomId        String
+  participantId String
+  isReady       Boolean   @default(false)
+  joinedAt      DateTime  @default(now())
+  room          MatchRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  // One seat per person in a room. Capacity is enforced under a room row lock.
+  @@id([roomId, participantId])
+}
+
 // Models
 
 model Player {

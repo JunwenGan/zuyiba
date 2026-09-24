@@ -12,6 +12,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "vitest run",
+    "test:integration": "node --import tsx --test integration/room-repository.test.ts",
     "test:e2e": "node e2e/run.mjs",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
