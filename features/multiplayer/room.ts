@@ -14,7 +14,7 @@ export interface RoomParticipant {
 export interface MatchRoom {
   readonly id: string;
   readonly hostId: string;
-  readonly status: 'WAITING' | 'PLAYING';
+  readonly status: 'WAITING' | 'PLAYING' | 'FINISHED';
   readonly participants: readonly RoomParticipant[];
 }
 

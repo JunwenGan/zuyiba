@@ -91,9 +91,129 @@ on HTTPS and allow HTTP for local development. Keep these endpoints same-origin;
 no cross-origin CORS permission is granted. A room ID acts as an invite: anyone
 who has it can take the open seat. API responses are marked `no-store`.
 
-Before public launch we still need abuse/rate limits, expired-session/room cleanup,
-and room-leave/expiry behavior. This checkpoint is not production-complete.
+Before public launch we still need abuse/rate limits and expired-session/room cleanup.
+This checkpoint is not production-complete.
 
-Still to build: answer and guess storage, first-correct-wins handling, Socket.IO
-and the UI. No start endpoint is exposed yet: `PLAYING` currently represents only
-a repository transition, not a playable multiplayer game.
+## Step 4: shared answer and first-correct winner
+
+- `POST /api/rooms/:roomId/start` with `{}`: only the host, with both players ready.
+- `POST /api/rooms/:roomId/guesses` with `{ "playerId": "..." }`: submit your guess.
+- `GET /api/rooms/:roomId`: reload your feedback and the shared match status.
+
+Start chooses one active normal-mode (elite-club) answer on the server. Clients
+cannot choose or read it while playing. Each participant sees their own full
+guess history and only the opponent's color results. The answer is revealed to both members
+only when the match is `FINISHED`.
+
+Read the code in this order:
+
+1. `app/api/rooms/[roomId]/start/route.ts` → `http.ts` → `room-repository.ts`:
+   validate the host/readiness, then save the answer and start time atomically.
+2. `app/api/rooms/[roomId]/guesses/route.ts` → `http.ts` → `match-repository.ts`:
+   identify the caller, lock the room, validate and save the guess, record a winner.
+3. `match-repository.ts` → `state()`: return a safe member-specific response.
+
+Both players lock the SAME room row before guessing. If two correct requests
+race, the transaction that acquires the lock first and commits successfully wins;
+the other sees `FINISHED`. This is server processing order, not the browser click
+timestamp. Incorrect guesses also use the lock but do not end the match.
+
+Retrying an already accepted player guess returns current state without adding
+another attempt, including after completion. A new guess after completion is
+rejected. Guess feedback is saved as JSON so refreshing preserves it. Age is
+calculated at match start for both participants. A matching player ID, not matching
+attributes, determines the winner.
+
+Each player has eight guesses. An exhausted player waits while the other can
+continue; if both exhaust their guesses without winning, the match ends in a
+draw (`FINISHED` with a null `winnerId`) and reveals the answer. The limit and
+draw decision run under the same room lock as winning guesses. There is no overall match timer.
+Do not import/change player attributes during an active match;
+answer-attribute snapshots can be added before supporting live data refreshes.
+The migration returns old answer-less `PLAYING` lobbies to `WAITING`; existing
+single-player sessions are untouched. Apply it before using the new endpoints.
+
+## Step 5: screen and live updates
+
+Open `/rooms` (or click **好友对战** on the home page). Create a room, copy the
+invite URL, and open it in a different browser/incognito window. The friend must
+click **加入房间**. Both click **准备**, then the host clicks **开始对战**.
+Joining is explicit; simply opening an invitation does not consume a seat.
+
+`RoomLobby.tsx` is the create/invite screen. `RoomGame.tsx` displays the lobby,
+search, private guess history, connection status, and final result. It reuses the
+single-player search and feedback table. Only the room ID is in the URL; identity
+comes from the HttpOnly cookie. Copy has a manual-selection fallback.
+
+Live flow:
+
+1. Browser sends its action to the existing HTTP API.
+2. The transaction commits in PostgreSQL.
+3. `http.ts` calls `notifyRoom()` in `room-events.ts`.
+4. `socket-server.ts` sends a payload-free `room:changed` hint to room members.
+5. Each `RoomGame.tsx` fetches its own safe state from the HTTP API.
+
+Sockets check the cookie, Origin and room membership. They cannot submit guesses
+or pick a winner. A reconnect triggers a fresh database read, so missed messages
+do not erase guesses. Request generations prevent older responses overwriting
+newer state. Actions are disabled while disconnected; **刷新状态** can retry the
+connection. A `room:presence` event carries only the connected participant IDs.
+
+### Leaving, disconnects and replay
+
+- `POST /api/rooms/:roomId/leave` (`{}`) forfeits an active match after UI confirmation.
+- The socket server checks active rooms every second. Connected participants renew
+  their persisted `lastSeenAt`; a last-tab disconnect starts a 60-second grace period.
+  Socket failure detection itself can take roughly ten seconds. Multiple tabs count
+  as one participant; closing only one does not start the grace period.
+- One absent participant past the grace period loses to the connected participant.
+  If both are absent, wait until both grace periods expire, then finish as
+  `ABANDONED` with no winner. Reconnecting after expiry cannot revive a match.
+  Persisted timestamps also let the worker recover after a server restart.
+- `POST /api/rooms/:roomId/restart` (`{}`) creates a fresh lobby for the same two
+  participants with readiness reset. Both see the next-lobby button. It does not
+  auto-move the opponent or clear history. Concurrent retries reuse one saved
+  `rematchRoomId`. The old host remains the host.
+- Apply `20261001000000_match_departures` before starting the updated server:
+  `npx prisma migrate deploy`, then `npx prisma generate`.
+
+Presence tracking assumes exactly one Node server process. Do not run two servers
+against the same live matches until presence is coordinated across processes.
+The one-second database sweep is intentionally simple for this deployment; a
+larger deployment needs indexed/batched deadline jobs and shared presence.
+
+### Running the server
+
+`npm run dev` now starts `server.ts`: Next.js and Socket.IO share one HTTP server
+on port 3000. Restart an old `next dev` process to use the new entry point. Server
+file changes require a restart; Next page/component hot reload still works.
+Use `npm run build` then `npm start` for production. `tsx` is needed at runtime.
+
+`PORT` changes the port, `BIND_HOST` changes the bind interface (default
+`0.0.0.0`). For a friend on your LAN, open the app using your computer's LAN IP
+before copying the invite; `localhost` links work only on the same computer.
+Keep the app on a trusted network until public-launch hardening is completed.
+
+Deploy this as a persistent Node process/container with WebSocket proxy support,
+not Vercel serverless or Next standalone output. Set `APP_ORIGIN` to the exact
+public HTTPS origin (no trailing slash). The current event bridge supports **one
+Node process**; multiple processes would need shared pub/sub (e.g. Redis) and a
+Socket.IO adapter. PostgreSQL still stores all durable state.
+
+Tests: `npm run test:e2e` includes two real browsers playing via the UI on desktop
+and mobile, plus reconnect-after-win and refresh. `npm run test:integration`
+also checks socket authorization and that events contain no private game data.
+
+### Opponent color history
+
+`MatchState.opponentGuesses` contains one row per opponent guess: the guess number
+and five result classifications (nationality, club, league, position, age).
+`opponent-guess.ts` constructs this explicit allowlist on the server. No footballer
+ID/name, field values, timestamps, images, or numeric direction hints are sent.
+`OpponentGuessTable.tsx` displays the colors with symbols and accessible labels.
+The same privacy rule applies after completion (the shared answer is still revealed).
+Existing socket notifications refresh both grids; refresh/reconnect reloads the
+persisted rows. No database migration is needed for this color-history change.
+
+Still to build before public launch: rate limits, waiting-lobby/session cleanup,
+and operational hardening. Replay creates a new room; old rooms are not reset.

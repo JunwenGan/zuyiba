@@ -4,9 +4,13 @@ import type { PrismaClient } from '../../lib/generated/prisma/client';
 import { createGuestSessions, GUEST_COOKIE, GUEST_SESSION_SECONDS } from './guest-session';
 import { createRoomRepository } from './room-repository';
 import { RoomError } from './room-error';
+import { createMatchRepository } from './match-repository';
+import { notifyRoom } from './room-events';
+import { createMatchLifecycle } from './match-lifecycle';
 
 const emptyBody = z.object({}).strict();
 const readyBody = z.object({ isReady: z.boolean() }).strict();
+const guessBody = z.object({ playerId: z.string().trim().min(1).max(128) }).strict();
 const statuses = { INVALID_INPUT: 400, NOT_FOUND: 404, FORBIDDEN: 403, CONFLICT: 409 };
 
 function json(data: unknown, status = 200) {
@@ -21,6 +25,8 @@ function failure(code: string, message: string, status: number) {
 export function createMultiplayerHttp(db: PrismaClient, configuredOrigin?: string) {
   const sessions = createGuestSessions(db);
   const rooms = createRoomRepository(db);
+  const matches = createMatchRepository(db);
+  const lifecycle = createMatchLifecycle(db);
 
   function origin(request: NextRequest) {
     if (configuredOrigin) return new URL(configuredOrigin).origin;
@@ -85,8 +91,27 @@ export function createMultiplayerHttp(db: PrismaClient, configuredOrigin?: strin
     sessions.find(request.cookies.get(GUEST_COOKIE)?.value);
   const unauthorized = () =>
     failure('UNAUTHORIZED', 'Create or renew your guest session first', 401);
+  function changed(roomId: string, data: unknown) {
+    notifyRoom(roomId);
+    return json({ success: true, data });
+  }
 
   return {
+    leave: (request: NextRequest, roomId: string) =>
+      handle(async () => {
+        await body(request, emptyBody);
+        const session = await identify(request);
+        if (!session) return unauthorized();
+        await lifecycle.leave(roomId, session.id);
+        return changed(roomId, await matches.read(roomId, session.id));
+      }),
+    restart: (request: NextRequest, roomId: string) =>
+      handle(async () => {
+        await body(request, emptyBody);
+        const session = await identify(request);
+        if (!session) return unauthorized();
+        return changed(roomId, await lifecycle.restart(roomId, session.id));
+      }),
     session: (request: NextRequest) =>
       handle(async () => {
         await body(request, emptyBody);
@@ -114,26 +139,36 @@ export function createMultiplayerHttp(db: PrismaClient, configuredOrigin?: strin
       handle(async () => {
         const session = await identify(request);
         if (!session) return unauthorized();
-        const room = await rooms.find(roomId);
-        // Do not disclose room participants to nonmembers.
-        if (!room || !room.participants.some((p) => p.id === session.id)) {
-          throw new RoomError('NOT_FOUND', 'Room not found');
-        }
-        return json({ success: true, data: room });
+        return json({ success: true, data: await matches.read(roomId, session.id) });
       }),
     join: (request: NextRequest, roomId: string) =>
       handle(async () => {
         await body(request, emptyBody);
         const session = await identify(request);
         if (!session) return unauthorized();
-        return json({ success: true, data: await rooms.join(roomId, session.id) });
+        return changed(roomId, await rooms.join(roomId, session.id));
       }),
     ready: (request: NextRequest, roomId: string) =>
       handle(async () => {
         const { isReady } = await body(request, readyBody);
         const session = await identify(request);
         if (!session) return unauthorized();
-        return json({ success: true, data: await rooms.ready(roomId, session.id, isReady) });
+        return changed(roomId, await rooms.ready(roomId, session.id, isReady));
+      }),
+    start: (request: NextRequest, roomId: string) =>
+      handle(async () => {
+        await body(request, emptyBody);
+        const session = await identify(request);
+        if (!session) return unauthorized();
+        await rooms.start(roomId, session.id);
+        return changed(roomId, await matches.read(roomId, session.id));
+      }),
+    guess: (request: NextRequest, roomId: string) =>
+      handle(async () => {
+        const { playerId } = await body(request, guessBody);
+        const session = await identify(request);
+        if (!session) return unauthorized();
+        return changed(roomId, await matches.guess(roomId, session.id, playerId));
       }),
   };
 }

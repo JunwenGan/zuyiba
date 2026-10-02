@@ -59,6 +59,43 @@ test('two browsers keep separate guest identities and share saved lobby state', 
     const repeated = await call(page, '/api/multiplayer/session', {});
     expect(repeated.status).toBe(200);
     expect(repeated.body.data.participantId).toBe(hostId);
+    expect((await call(page, `${path}/start`, {})).status).toBe(409);
+    expect((await call(page, `${path}/ready`, { isReady: true })).status).toBe(200);
+    expect((await call(friend, `${path}/start`, {})).status).toBe(403);
+    const started = await call(page, `${path}/start`, {});
+    expect(started.status).toBe(200);
+    expect(started.body.data.status).toBe('PLAYING');
+    expect(started.body.data.answer).toBeNull();
+    expect(JSON.stringify(started.body)).not.toContain('e2e-player-0');
+    const wrong = await call(page, `${path}/guesses`, { playerId: 'e2e-player-1' });
+    expect(wrong.status).toBe(200);
+    expect(wrong.body.data.guesses).toHaveLength(1);
+    const opponent = (await call(friend, path)).body.data;
+    expect(opponent.guesses).toHaveLength(0);
+    expect(opponent.opponentGuesses).toEqual([
+      {
+        guessNumber: 1,
+        results: {
+          nationality: 'partial',
+          club: 'incorrect',
+          league: 'incorrect',
+          position: 'incorrect',
+          age: 'incorrect',
+        },
+      },
+    ]);
+    expect(JSON.stringify(opponent)).not.toContain('e2e-player-1');
+    expect(JSON.stringify(opponent)).not.toContain('Bravo Guess');
+    await page.reload();
+    expect((await call(page, path)).body.data.guesses).toEqual(wrong.body.data.guesses);
+    const winner = await call(friend, `${path}/guesses`, { playerId: 'e2e-player-0' });
+    expect(winner.status).toBe(200);
+    expect(winner.body.data.status).toBe('FINISHED');
+    expect(winner.body.data.winnerId).toBe(friendId);
+    expect(winner.body.data.answer.id).toBe('e2e-player-0');
+    expect((await call(page, `${path}/guesses`, { playerId: 'e2e-player-0' })).status).toBe(409);
+    await page.reload();
+    expect((await call(page, path)).body.data.winnerId).toBe(friendId);
   } finally {
     await friendContext.close();
   }

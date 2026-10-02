@@ -1,4 +1,6 @@
-import { randomUUID } from 'node:crypto';
+import { randomInt, randomUUID } from 'node:crypto';
+import { ELITE_CLUBS } from '../../types/database';
+import { lockRoom } from './lock-room';
 import { RoomError } from './room-error';
 import type { Prisma, PrismaClient } from '../../lib/generated/prisma/client';
 import { createRoom, joinRoom, setReady, startMatch, type MatchRoom } from './room';
@@ -15,7 +17,7 @@ const roomSelect = {
 
 type StoredRoom = Prisma.MatchRoomGetPayload<{ select: typeof roomSelect }>;
 
-function toRoom(stored: StoredRoom): MatchRoom {
+export function toRoom(stored: StoredRoom): MatchRoom {
   return {
     id: stored.id,
     hostId: stored.hostId,
@@ -32,10 +34,7 @@ export function createRoomRepository(db: PrismaClient) {
     return db.$transaction(
       async (tx) => {
         // Serialize changes to THIS room, not all rooms. Released on commit/rollback.
-        const rows = await tx.$queryRaw<{ id: string }[]>`
-        SELECT id FROM "MatchRoom" WHERE id = ${roomId} FOR UPDATE
-      `;
-        if (rows.length === 0) throw new RoomError('NOT_FOUND', 'Room not found');
+        await lockRoom(tx, roomId);
         const stored = await tx.matchRoom.findUniqueOrThrow({
           where: { id: roomId },
           select: roomSelect,
@@ -44,7 +43,22 @@ export function createRoomRepository(db: PrismaClient) {
         const next = apply(current);
         if (next === current) return current;
 
-        await tx.matchRoom.update({ where: { id: roomId }, data: { status: next.status } });
+        const data: Prisma.MatchRoomUpdateInput = { status: next.status };
+        if (current.status === 'WAITING' && next.status === 'PLAYING') {
+          // Fetch eligible IDs in one query so selection uses one consistent pool.
+          const eligible = await tx.player.findMany({
+            where: { active: true, club: { in: [...ELITE_CLUBS] } },
+            select: { id: true },
+          });
+          if (!eligible.length) throw new RoomError('CONFLICT', 'No eligible players available');
+          data.answerPlayer = { connect: { id: eligible[randomInt(eligible.length)].id } };
+          data.startedAt = new Date();
+          await tx.matchParticipant.updateMany({
+            where: { roomId },
+            data: { lastSeenAt: data.startedAt },
+          });
+        }
+        await tx.matchRoom.update({ where: { id: roomId }, data });
         for (const participant of next.participants) {
           await tx.matchParticipant.upsert({
             where: { roomId_participantId: { roomId, participantId: participant.id } },

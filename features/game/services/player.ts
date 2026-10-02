@@ -4,30 +4,9 @@
 
 import { prisma } from '@/lib/database';
 import type { Player } from '@/lib/generated/prisma/client';
-import type { PlayerData, PlayerSummary } from '@/features/game/types';
-import { calculateAge } from '@/features/game/utils';
+import type { PlayerSummary } from '@/features/game/types';
+export { toPlayerData } from '../utils/player-data';
 import { ELITE_CLUBS, type GameMode } from '@/types/database';
-
-/**
- * Convert a database Player to PlayerData for API responses.
- */
-export function toPlayerData(player: Player, referenceDate?: Date): PlayerData {
-  return {
-    id: player.id,
-    name: player.name,
-    nationality: player.nationality,
-    countryCode: player.countryCode,
-    club: player.club,
-    league: player.league,
-    position: player.position,
-    positionGroup: player.positionGroup,
-    age: calculateAge(player.birthDate, referenceDate),
-    heightCm: player.heightCm,
-    preferredFoot: player.preferredFoot,
-    imageUrl: player.imageUrl,
-    clubLogoUrl: player.clubLogoUrl,
-  };
-}
 
 /**
  * Convert a database Player to PlayerSummary for search results.

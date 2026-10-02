@@ -1,5 +1,6 @@
 import { Game } from '@/features/game/components';
 import { zh } from '@/lib/i18n';
+import Link from 'next/link';
 
 export default function Home() {
   return (
@@ -16,14 +17,18 @@ export default function Home() {
 
       {/* Main content */}
       <main className="flex w-full flex-1 flex-col items-center px-4 py-8">
+        <Link
+          href="/rooms"
+          className="hover:bg-muted mb-6 rounded-lg border px-4 py-2 text-sm font-medium"
+        >
+          好友对战 →
+        </Link>
         <Game />
       </main>
 
       {/* Footer */}
       <footer className="border-t py-4">
-        <p className="text-muted-foreground text-sm">
-          ZuYiBa &copy; {new Date().getFullYear()}
-        </p>
+        <p className="text-muted-foreground text-sm">ZuYiBa &copy; {new Date().getFullYear()}</p>
       </footer>
     </div>
   );

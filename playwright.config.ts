@@ -24,7 +24,7 @@ export default defineConfig({
   ],
   webServer: {
     command:
-      'node node_modules/next/dist/bin/next build --webpack && node node_modules/next/dist/bin/next start --hostname 127.0.0.1 --port 3100',
+      'node node_modules/next/dist/bin/next build --webpack && PORT=3100 BIND_HOST=127.0.0.1 node --import tsx server.ts --production',
     url: 'http://127.0.0.1:3100',
     reuseExistingServer: false,
     timeout: 300_000,
